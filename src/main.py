@@ -14,8 +14,8 @@ from datasets.main import load_dataset
 # Settings
 ################################################################################
 @click.command()
-@click.argument('dataset_name', type=click.Choice(['mnist', 'cifar10']))
-@click.argument('net_name', type=click.Choice(['mnist_LeNet', 'cifar10_LeNet', 'cifar10_LeNet_ELU']))
+@click.argument('dataset_name', type=click.Choice(['mnist', 'cifar10', 'hs_ds']))
+@click.argument('net_name', type=click.Choice(['mnist_LeNet', 'cifar10_LeNet', 'cifar10_LeNet_ELU', 'HSNet']))
 @click.argument('xp_path', type=click.Path(exists=True))
 @click.argument('data_path', type=click.Path(exists=True))
 @click.option('--load_config', type=click.Path(exists=True), default=None,
@@ -32,7 +32,7 @@ from datasets.main import load_dataset
 @click.option('--lr', type=float, default=0.001,
               help='Initial learning rate for Deep SVDD network training. Default=0.001')
 @click.option('--n_epochs', type=int, default=50, help='Number of epochs to train.')
-@click.option('--lr_milestone', type=int, default=0, multiple=True,
+@click.option('--lr_milestone', type=int, default=[], multiple=True,
               help='Lr scheduler milestones at which lr is multiplied by 0.1. Can be multiple and must be increasing.')
 @click.option('--batch_size', type=int, default=128, help='Batch size for mini-batch training.')
 @click.option('--weight_decay', type=float, default=1e-6,
@@ -44,7 +44,7 @@ from datasets.main import load_dataset
 @click.option('--ae_lr', type=float, default=0.001,
               help='Initial learning rate for autoencoder pretraining. Default=0.001')
 @click.option('--ae_n_epochs', type=int, default=100, help='Number of epochs to train autoencoder.')
-@click.option('--ae_lr_milestone', type=int, default=0, multiple=True,
+@click.option('--ae_lr_milestone', type=int, default=[], multiple=True,
               help='Lr scheduler milestones at which lr is multiplied by 0.1. Can be multiple and must be increasing.')
 @click.option('--ae_batch_size', type=int, default=128, help='Batch size for mini-batch autoencoder training.')
 @click.option('--ae_weight_decay', type=float, default=1e-6,
@@ -169,7 +169,7 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
     idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
 
-    if dataset_name in ('mnist', 'cifar10'):
+    if dataset_name in ('mnist', 'cifar10', 'hs_ds'):
 
         if dataset_name == 'mnist':
             X_normals = dataset.test_set.test_data[idx_sorted[:32], ...].unsqueeze(1)
@@ -178,6 +178,11 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
         if dataset_name == 'cifar10':
             X_normals = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[:32], ...], (0, 3, 1, 2)))
             X_outliers = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[-32:], ...], (0, 3, 1, 2)))
+
+        if dataset_name == 'hs_ds':
+            X_normals = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[:32]])  
+            X_outliers = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[-32:]])  
+
 
         plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
         plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
@@ -190,3 +195,38 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
 
 if __name__ == '__main__':
     main()
+
+# Example command to run the script:
+"""
+ python main.py hs_ds HSNet ../log/hs_test ../data \
+ --objective one-class \
+ --lr 0.0001 \
+ --n_epochs 150 \
+ --lr_milestone 50 \
+ --batch_size 200 \
+ --weight_decay 0.5e-6 \
+ --pretrain True \
+ --ae_lr 0.0001 \
+ --ae_n_epochs 150 \
+ --ae_lr_milestone 50 \
+ --ae_batch_size 200 \
+ --ae_weight_decay 0.5e-3 \
+ --normal_class 3
+
+"""
+"""
+ python main.py hs_ds HSNet ../log/hs_test ../data \
+ --n_epochs 1 \
+ --batch_size 10 \
+ --ae_n_epochs 1 \
+ --ae_batch_size 10 
+
+"""
+# Example command to run the script for hyperspectral data:
+# python main.py hyperspectral my_hyperspectral_net ../log/hyperspectral_test ../data \
+# --objective one-class \
+# --lr 0.0001 \
+# --n_epochs 150 \
+# --batch_size 200 \
+# --pretrain True \
+# --normal_class 0

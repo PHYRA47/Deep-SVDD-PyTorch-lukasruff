@@ -39,7 +39,7 @@ class AETrainer(BaseTrainer):
         ae_net.train()
         for epoch in range(self.n_epochs):
 
-            scheduler.step()
+            # Move scheduler.step() after optimizer.step()
             if epoch in self.lr_milestones:
                 logger.info('  LR scheduler: new learning rate is %g' % float(scheduler.get_lr()[0]))
 
@@ -58,11 +58,13 @@ class AETrainer(BaseTrainer):
                 scores = torch.sum((outputs - inputs) ** 2, dim=tuple(range(1, outputs.dim())))
                 loss = torch.mean(scores)
                 loss.backward()
-                optimizer.step()
+                optimizer.step() # Call optimizer.step() first
 
                 loss_epoch += loss.item()
                 n_batches += 1
 
+            scheduler.step() # Then call scheduler.step()
+            
             # log epoch statistics
             epoch_train_time = time.time() - epoch_start_time
             logger.info('  Epoch {}/{}\t Time: {:.3f}\t Loss: {:.8f}'
