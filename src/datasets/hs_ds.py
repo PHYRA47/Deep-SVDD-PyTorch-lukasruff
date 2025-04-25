@@ -68,61 +68,156 @@ class HS_Dataset(TorchvisionDataset):
 
 class SkinPatchDataset(Dataset):
 
-    def __init__(self, num_subjects=10, patches_per_subject=10, patch_size=16, noise_scale=0.025, 
-                 transform=None, target_transform = None, verbose=False):
+    def __init__(self, 
+                 num_subjects=10, 
+                 patches_per_subject=10, 
+                 patch_size=16, 
+                 noise_scale=0.025, 
+                 real_to_fake_ratio=1.0,
+                 transform=None, 
+                 target_transform=None, 
+                 verbose=False
+                 ):
 
         # File paths
-        reflectance_csv_path = '/cig/common05nb/students/denegasf/datasets/1832_Data_JResNIST_skinrefl_v3.csv'
-        std_path = '/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/grid_files_v2/combined_grid_stats.mat'
+        R_real_csv_path = [
+            '/cig/common05nb/students/denegasf/datasets/1832_Data_JResNIST_skinrefl_v3_average_only.csv' # changed
+            ]
+        R_fake_csv_path = [
+            "/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/reconstructed/mst-plus-plus/reconstruction_reflectance_data.csv",
+            "/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/reconstructed/restormer/reconstruction_reflectance_data.csv"
+        ]
+        sr_mat_path = '/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/grid_files_v2/combined_grid_stats.mat'
 
-        # Load reflectance data
-        r_data = pd.read_csv(reflectance_csv_path, skiprows=7, encoding='latin1')  # Reflectance data
-        std_data = loadmat(std_path)['std_of_mean_reflectance'][:31]              # Standard deviation data
 
-        # Extract wavelength and reflectance
-        wavelength = r_data['Wavelength (nm)'].to_numpy()
-        reflectance = r_data.filter(like='Average').to_numpy()
+        # Load and process reflectance data 
+        self.R_real = self._load_reflectance(R_real_csv_path, interpolate=True, randomize=False, num_subjects=num_subjects)
+        self.R_fake = self._load_reflectance(R_fake_csv_path, interpolate=False, randomize=False, num_subjects=num_subjects)
 
-        # Interpolate reflectance to a new wavelength range (400 to 720 nm, 10 nm step)
-        new_wavelength = np.arange(400, 721, 10)[:31]
-        interpolated_reflectance = np.zeros((len(new_wavelength), reflectance.shape[1]))
-        for i in range(reflectance.shape[1]):
-            interp_func = interp1d(wavelength, reflectance[:, i], kind='cubic', bounds_error=False, fill_value="extrapolate")
-            interpolated_reflectance[:, i] = interp_func(new_wavelength)
+        # Load standard deviation data
+        self.sr = loadmat(sr_mat_path)['std_of_mean_reflectance'][4][:31]
 
-        self.R_spectra = interpolated_reflectance[:31, :num_subjects]   # Use the first `num_subjects`
-        self.sr_spectra = std_data[4][:31]                              # Use the std for the first 31 wavelengths
-        self.sensor_sens = np.eye(len(new_wavelength))               # identity matrix for simplicity
+        # Sensor sensitivity (identity matrix for simplicity)
+        self.sensor_sens = np.eye(31)
 
+        # Defined wavelength range (400–700 nm in 10 nm steps)
+        self.wavelength = np.arange(400, 701, 10)
+
+        # Dataset parameters
         self.num_subjects = num_subjects
         self.patches_per_subject = patches_per_subject
-
         self.patch_size = patch_size
         self.noise_scale = noise_scale
-        self.total_patches = num_subjects * patches_per_subject
+        self.real_to_fake_ratio = real_to_fake_ratio  # Store the ratio
+
+        # Calculate the number of real and fake patches based on the ratio
+        total_real_patches = int((real_to_fake_ratio / (1 + real_to_fake_ratio)) * (num_subjects * patches_per_subject * 2))
+        total_fake_patches = (num_subjects * patches_per_subject * 2) - total_real_patches
+
+        self.num_real_patches = total_real_patches
+        self.num_fake_patches = total_fake_patches
+        self.total_patches = self.num_real_patches + self.num_fake_patches
 
         self.transform = transform
         self.target_transform = target_transform
         self.verbose = verbose
 
-    def _generate_patch(self, subject_id):
+    def _load_reflectance(self, csv_paths, interpolate=False, num_subjects=None, randomize=False):
+        """
+        Load reflectance data from multiple CSV files.
+        If interpolate=True, interpolate the data to match the wavelength range (400–700 nm in 10 nm steps).
+        If num_subjects is specified, randomly or sequentially select that many subjects based on `randomize`.
+        """
+        reflectance_list = []
+        for csv_path in csv_paths:
+            # Load data from CSV
+            data = pd.read_csv(csv_path, skiprows=7 if interpolate else 0, encoding='latin1')
+            wavelength = data.iloc[:, 0].to_numpy()  # First column is wavelength
+            reflectance = data.iloc[:, 1:].to_numpy()  # Remaining columns are reflectance
+            
+            if interpolate:
+                # Interpolate reflectance to a new wavelength range (400 to 720 nm, 10 nm step)
+                wvl = np.arange(400, 701, 10)  # New wavelength range 
+                interpolated_reflectance = np.zeros((len(wvl), reflectance.shape[1]))
+                for i in range(reflectance.shape[1]):
+                    interp_func = interp1d(wavelength, reflectance[:, i], kind='cubic', bounds_error=False, fill_value="extrapolate")
+                    interpolated_reflectance[:, i] = interp_func(wvl)
+                reflectance_list.append(interpolated_reflectance)
+            else:
+                # Ensure the wavelength matches the expected range
+                if not np.array_equal(wavelength, wvl):
+                    raise ValueError(f"Wavelengths in {csv_path} do not match the expected range.")
+                reflectance_list.append(reflectance)
 
-        # Sample reflectance values with noise
-        reflectance_cube = np.random.normal(
-            loc=self.R_spectra[:, subject_id],
-            scale=self.sr_spectra**2, # The square term is used here to reduce std to smaller values
-            size=(self.patch_size, self.patch_size, self.R_spectra.shape[0])
-        )
+        # Combine all reflectance data
+        combined_reflectance = np.concatenate(reflectance_list, axis=1)
 
+        # If num_subjects is specified, select that many subjects
+        if num_subjects:
+            total_subjects = combined_reflectance.shape[1]
+
+            # Validate num_subjects
+            if num_subjects > total_subjects:
+                raise ValueError(f"num_subjects ({num_subjects}) exceeds the number of available subjects ({total_subjects}).")
+            if num_subjects < 1:
+                raise ValueError("num_subjects must be at least 1.")
+
+            if randomize:
+                # Randomly select subjects
+                selected_indices = np.random.choice(total_subjects, num_subjects, replace=False)
+                combined_reflectance = combined_reflectance[:, selected_indices]
+            else:
+                # Select the first `num_subjects` subjects
+                combined_reflectance = combined_reflectance[:, :num_subjects]
+
+        return combined_reflectance
+
+    def _apply_sensor_sensitivity(self, reflectance_cube):
+        """
+        Apply sensor sensitivity to the reflectance cube.
+        """
         # Integrate with sensor sensitivity
         intensity_cube = np.einsum('hwl,cl->hwc', reflectance_cube, self.sensor_sens)
+        return intensity_cube
 
-        # Add shot-like sensor noise
+    def _add_sensor_noise(self, intensity_cube):
+        """
+        Add shot-like sensor noise to the intensity cube.
+        """
         alpha = self.noise_scale
         std_dev = alpha * np.sqrt(np.clip(intensity_cube, 1e-10, None))
         noise = np.random.normal(loc=0.0, scale=std_dev)
         intensity_cube_noisy = intensity_cube + noise
         intensity_cube_noisy = np.clip(intensity_cube_noisy, 0.0, 1e3)  # Clip to a valid range
+        return intensity_cube_noisy
+
+    def _generate_patch(self, data_type='real', subject_id=None):
+        """
+        Generate a patch for the given data type ('real' or 'fake') and subject ID.
+        """
+        if data_type == 'real':
+            reflectance_data = self.R_real
+        elif data_type == 'fake':
+            reflectance_data = self.R_fake
+        else:
+            raise ValueError(f"Invalid data_type: {data_type}. Must be 'real' or 'fake'.")
+
+        # If subject_id is not provided, randomly select one
+        if subject_id is None:
+            subject_id = np.random.randint(0, reflectance_data.shape[1])
+
+        # Sample reflectance values with noise
+        reflectance_cube = np.random.normal(
+            loc=reflectance_data[:, subject_id],
+            scale=self.sr**2,
+            size=(self.patch_size, self.patch_size, reflectance_data.shape[0])
+        )
+
+        # Apply sensor sensitivity
+        intensity_cube = self._apply_sensor_sensitivity(reflectance_cube)
+
+        # Add sensor noise
+        intensity_cube_noisy = self._add_sensor_noise(intensity_cube)
 
         # Convert to PyTorch tensor and permute to (bands, H, W)
         patch_tensor = torch.tensor(intensity_cube_noisy, dtype=torch.float32)
@@ -134,21 +229,24 @@ class SkinPatchDataset(Dataset):
         return self.total_patches
 
     def __getitem__(self, idx):
-        # Determine the subject ID
-        subject_id = idx // self.patches_per_subject
+        # Determine if the patch is real or fake based on the index
+        if idx < self.num_real_patches:
+            data_type = 'real'
+            subject_id = idx // self.patches_per_subject
+        else:
+            data_type = 'fake'
+            subject_id = (idx - self.num_real_patches) // self.patches_per_subject
 
-        # Generate a patch for the subject
-        patch_tensor = self._generate_patch(subject_id)
+        # Generate the patch
+        patch_tensor = self._generate_patch(data_type=data_type, subject_id=subject_id)
 
         if self.transform:
             patch_tensor = self.transform(patch_tensor)
 
-        if self.target_transform:
-            label = self.target_transform(subject_id)
-        else:
-            label = subject_id
-        
-        return patch_tensor, label, idx   # label 0: normal, 1: outlier
+        # Assign labels: 0 for real, 1 for fake
+        label = 0 if data_type == 'real' else 1
+
+        return patch_tensor, label, idx
     
 
     
