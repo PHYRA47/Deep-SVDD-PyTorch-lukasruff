@@ -8,19 +8,21 @@ import torchvision.transforms as transforms
 
 from base.torchvision_dataset import TorchvisionDataset
 from .preprocessing import get_target_label_idx, global_contrast_normalization
+from prettytable import PrettyTable
 
 
 class HS_Dataset(TorchvisionDataset):
-    def __init__(self, num_subjects=10, patches_per_subject=10, patch_size=32, noise_scale=0.025):
+    def __init__(self, 
+                 num_subjects=10, 
+                 patches_per_subject=10, 
+                 patch_size=32, 
+                 noise_scale=0.025):
+        
         super().__init__(root=None)  # No root directory needed for on-the-fly generation
-
-        self.n_classes = 2 # 0: normal, 1: outlier  
-        self.normal_classes = tuple([0])    # Label 0: normal (real skin patches)
-        self.outlier_classes = tuple([1])   # Label 1: outlier (anything not real)
 
         # Pre-computed min and max values (after applying GCN)  
         min_value, max_value = (-2.0743157863616943, 3.0839202404022217) # data from 10 sub 10 patches/sub
-        # min_value, max_value = (-2.3745954036712646, 3.5976827144622803) # data from 100 sub 50 patches/sub
+        # (-2.3745954036712646, 3.5976827144622803) # data from 100 sub 50 patches/sub
         
         # Preprocessing: GCN (with L1 norm) and min-max feature scaling 
         transform = transforms.Compose([
@@ -29,68 +31,84 @@ class HS_Dataset(TorchvisionDataset):
             transforms.Normalize([min_value] * 31, [max_value - min_value] * 31)
         ])
 
-        # Target transform: Change all subject IDs to 0
-        # ---------------------------------------------------------------------------------
-        # Here, everything is considered normal (real skin patches).
-        # ---------------------------------------------------------------------------------
-        target_transform = transforms.Lambda(lambda x: 0)
-
-        # Create the PatchDataset
-        self.dataset = SkinPatchDataset(
+        # Train set: Only real patches
+        self.train_set = SkinPatchDataset(
             num_subjects=num_subjects,
             patches_per_subject=patches_per_subject,
             patch_size=patch_size,
             noise_scale=noise_scale,
+            isRealSkin=True,  # Only real patches
             transform=transform,
-            target_transform=target_transform,
         )
 
-        # Use the entire dataset for training (no explicit test set for anomalies)
-        # self.train_set = self.dataset
-        # self.test_set = self.dataset
+        # Test set: Mix of real and fake patches
 
-        self.train_set = SkinPatchDataset(
-            num_subjects=100,
-            patches_per_subject=10,
+        # Percentage of fake patches in the test set
+        fake_percentage = 50
+
+        num_fake_patches = int((fake_percentage / 100) * num_subjects * patches_per_subject)
+        num_real_patches = (num_subjects * patches_per_subject) - num_fake_patches
+
+        # Real patches for the test set
+        self.test_real_set = SkinPatchDataset(
+            num_subjects=num_subjects,
+            patches_per_subject=num_real_patches // num_subjects,
             patch_size=patch_size,
             noise_scale=noise_scale,
-            transform=transform,
-            target_transform=target_transform,
-        )
-        self.test_set = SkinPatchDataset(
-            num_subjects=2,
-            patches_per_subject=200,
-            patch_size=patch_size,
-            noise_scale=noise_scale,
+            isRealSkin=True,  # Real patches
             transform=transform,
             target_transform=None
         )
 
-class SkinPatchDataset(Dataset):
+        # Fake patches for the test set
+        self.test_fake_set = SkinPatchDataset(
+            num_subjects=num_subjects,
+            patches_per_subject=num_fake_patches // num_subjects,
+            patch_size=patch_size,
+            noise_scale=noise_scale,
+            isRealSkin=False,  # Fake patches
+            transform=transform,
+            target_transform=None
+        )
 
+        # Combine real and fake test sets
+        self.test_set = torch.utils.data.ConcatDataset([self.test_real_set, self.test_fake_set])
+
+class SkinPatchDataset(Dataset):
     def __init__(self, 
                  num_subjects=10, 
                  patches_per_subject=10, 
                  patch_size=16, 
                  noise_scale=0.025, 
-                 real_to_fake_ratio=1.0,
+                 isRealSkin=True,
                  transform=None, 
                  target_transform=None, 
-                 verbose=False
-                 ):
+                 verbose=False):
+        """
+        Initialize the SkinPatchDataset.
 
+        Args:
+            num_subjects (int): Number of subjects to load.
+            patches_per_subject (int): Number of patches per subject.
+            patch_size (int): Size of each patch (square).
+            noise_scale (float): Scale of the noise to add.
+            real_to_fake_ratio (float): Ratio of real to fake patches (e.g., 1.0 means equal real and fake patches).
+            patch_type (str): Type of patches to include ('real', 'fake', or 'both').
+            transform (callable, optional): Transform to apply to the patches.
+            target_transform (callable, optional): Transform to apply to the labels.
+            verbose (bool): If True, print debug information.
+        """
         # File paths
         R_real_csv_path = [
-            '/cig/common05nb/students/denegasf/datasets/1832_Data_JResNIST_skinrefl_v3_average_only.csv' # changed
-            ]
+            '/cig/common05nb/students/denegasf/datasets/1832_Data_JResNIST_skinrefl_v3_average_only.csv'
+        ]
         R_fake_csv_path = [
             "/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/reconstructed/mst-plus-plus/reconstruction_reflectance_data.csv",
             "/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/reconstructed/restormer/reconstruction_reflectance_data.csv"
         ]
         sr_mat_path = '/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/grid_files_v2/combined_grid_stats.mat'
 
-
-        # Load and process reflectance data 
+        # Load and process reflectance data
         self.R_real = self._load_reflectance(R_real_csv_path, interpolate=True, randomize=False, num_subjects=num_subjects)
         self.R_fake = self._load_reflectance(R_fake_csv_path, interpolate=False, randomize=False, num_subjects=num_subjects)
 
@@ -108,16 +126,10 @@ class SkinPatchDataset(Dataset):
         self.patches_per_subject = patches_per_subject
         self.patch_size = patch_size
         self.noise_scale = noise_scale
-        self.real_to_fake_ratio = real_to_fake_ratio  # Store the ratio
+        self.isRealSkin = isRealSkin # Store the parch type
+        self.total_patches = num_subjects * patches_per_subject
 
-        # Calculate the number of real and fake patches based on the ratio
-        total_real_patches = int((real_to_fake_ratio / (1 + real_to_fake_ratio)) * (num_subjects * patches_per_subject * 2))
-        total_fake_patches = (num_subjects * patches_per_subject * 2) - total_real_patches
-
-        self.num_real_patches = total_real_patches
-        self.num_fake_patches = total_fake_patches
-        self.total_patches = self.num_real_patches + self.num_fake_patches
-
+        # Transformations
         self.transform = transform
         self.target_transform = target_transform
         self.verbose = verbose
@@ -134,10 +146,11 @@ class SkinPatchDataset(Dataset):
             data = pd.read_csv(csv_path, skiprows=7 if interpolate else 0, encoding='latin1')
             wavelength = data.iloc[:, 0].to_numpy()  # First column is wavelength
             reflectance = data.iloc[:, 1:].to_numpy()  # Remaining columns are reflectance
+
+            wvl = np.arange(400, 701, 10)  # New wavelength range 
             
             if interpolate:
                 # Interpolate reflectance to a new wavelength range (400 to 720 nm, 10 nm step)
-                wvl = np.arange(400, 701, 10)  # New wavelength range 
                 interpolated_reflectance = np.zeros((len(wvl), reflectance.shape[1]))
                 for i in range(reflectance.shape[1]):
                     interp_func = interp1d(wavelength, reflectance[:, i], kind='cubic', bounds_error=False, fill_value="extrapolate")
@@ -191,16 +204,14 @@ class SkinPatchDataset(Dataset):
         intensity_cube_noisy = np.clip(intensity_cube_noisy, 0.0, 1e3)  # Clip to a valid range
         return intensity_cube_noisy
 
-    def _generate_patch(self, data_type='real', subject_id=None):
+    def _generate_patch(self, subject_id=None):
         """
         Generate a patch for the given data type ('real' or 'fake') and subject ID.
         """
-        if data_type == 'real':
+        if self.isRealSkin:
             reflectance_data = self.R_real
-        elif data_type == 'fake':
-            reflectance_data = self.R_fake
         else:
-            raise ValueError(f"Invalid data_type: {data_type}. Must be 'real' or 'fake'.")
+            reflectance_data = self.R_fake
 
         # If subject_id is not provided, randomly select one
         if subject_id is None:
@@ -229,26 +240,22 @@ class SkinPatchDataset(Dataset):
         return self.total_patches
 
     def __getitem__(self, idx):
-        # Determine if the patch is real or fake based on the index
-        if idx < self.num_real_patches:
-            data_type = 'real'
-            subject_id = idx // self.patches_per_subject
-        else:
-            data_type = 'fake'
-            subject_id = (idx - self.num_real_patches) // self.patches_per_subject
+        # Determine the data type based on isRealSkin
+        subject_id = idx // self.patches_per_subject
 
         # Generate the patch
-        patch_tensor = self._generate_patch(data_type=data_type, subject_id=subject_id)
+        patch_tensor = self._generate_patch(subject_id=subject_id)
 
         if self.transform:
             patch_tensor = self.transform(patch_tensor)
 
+        if self.verbose:
+            # Print or log the verbose information
+            print(f"Patch Generation Details:")
+            print(f"  - Skin Type: {'Real' if self.isRealSkin else 'Fake'}")
+            print(f"  - Label: {label}")  
+
         # Assign labels: 0 for real, 1 for fake
-        label = 0 if data_type == 'real' else 1
+        label = 0 if self.isRealSkin else 1
 
         return patch_tensor, label, idx
-    
-
-    
-
-    
