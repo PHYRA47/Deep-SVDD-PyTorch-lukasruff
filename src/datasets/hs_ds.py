@@ -43,8 +43,6 @@ class HS_Dataset(TorchvisionDataset):
         )
 
         # Test set: Mix of real and fake patches
-
-        # Percentage of fake patches in the test set
         fake_percentage = 0.6 # 60% fake patches
 
         num_fake_patches = int((fake_percentage) * num_subjects * patches_per_subject)
@@ -53,7 +51,7 @@ class HS_Dataset(TorchvisionDataset):
         # Real patches for the test set
         self.test_real_set = SkinPatchDataset(
             num_subjects=100,
-            patches_per_subject=num_real_patches // num_subjects,
+            patches_per_subject= 1, # num_real_patches // num_subjects,
             patch_size=patch_size,
             noise_scale=noise_scale,
             isRealSkin=True,  # Real patches
@@ -63,15 +61,22 @@ class HS_Dataset(TorchvisionDataset):
         # Fake patches for the test set
         self.test_fake_set = SkinPatchDataset(
             num_subjects=100,
-            patches_per_subject=num_fake_patches // num_subjects,
+            patches_per_subject= 1, # num_fake_patches // num_subjects,
             patch_size=patch_size,
             noise_scale=noise_scale,
             isRealSkin=False,  # Fake patches
             transform=transform,
         )
 
-        # Combine real and fake test sets
-        self.test_set = torch.utils.data.ConcatDataset([self.test_real_set, self.test_fake_set])
+        # Set global offsets for test sets
+        self.test_real_set.global_offset = 0
+        self.test_fake_set.global_offset = len(self.test_real_set)
+
+        # Combine real and fake test sets and adjust indices
+        self.test_set = torch.utils.data.ConcatDataset([
+            self.test_real_set,
+            self.test_fake_set
+        ])
 
 class SkinPatchDataset(Dataset):
     
@@ -254,7 +259,7 @@ class SkinPatchDataset(Dataset):
         subject_id = idx // self.patches_per_subject
 
         if self.verbose:
-            print(f"----- Generating Patch -----")
+            print(f"------------ Generating Patch  ---------")
             print(f"Index: {idx}")
             print(f"Subject ID: {subject_id}")
             print(f"Skin Type: {'Real' if self.isRealSkin else 'Fake'}")
@@ -266,12 +271,18 @@ class SkinPatchDataset(Dataset):
 
         label = 0 if self.isRealSkin else 1
 
+        # Return the patch, label, and global index
+        if hasattr(self, 'global_offset'):
+            global_idx = idx + self.global_offset
+        else:
+            global_idx = idx
+
         if self.verbose:
             print(f"Patch generated successfully.")
             print(f"Label: {label}")
             print("-----------------------------------------")
 
-        return patch_tensor, label, idx
+        return patch_tensor, label, global_idx
 
     def __len__(self):
         return self.total_patches
