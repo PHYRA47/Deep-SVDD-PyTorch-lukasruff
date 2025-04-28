@@ -33,7 +33,7 @@ class HS_Dataset(TorchvisionDataset):
 
         # Train set: Only real patches
         self.train_set = SkinPatchDataset(
-            num_subjects=num_subjects,
+            num_subjects=100,
             patches_per_subject=patches_per_subject,
             patch_size=patch_size,
             noise_scale=noise_scale,
@@ -77,6 +77,7 @@ class HS_Dataset(TorchvisionDataset):
 class SkinPatchDataset(Dataset):
     def __init__(self, 
                  num_subjects=10, 
+                 randomize=False,
                  patches_per_subject=10, 
                  patch_size=16, 
                  noise_scale=0.025, 
@@ -92,12 +93,33 @@ class SkinPatchDataset(Dataset):
             patches_per_subject (int): Number of patches per subject.
             patch_size (int): Size of each patch (square).
             noise_scale (float): Scale of the noise to add.
-            real_to_fake_ratio (float): Ratio of real to fake patches (e.g., 1.0 means equal real and fake patches).
-            patch_type (str): Type of patches to include ('real', 'fake', or 'both').
+            isRealSkin (bool): Whether to load real or fake skin data.
             transform (callable, optional): Transform to apply to the patches.
             target_transform (callable, optional): Transform to apply to the labels.
             verbose (bool): If True, print debug information.
         """
+        self.verbose = verbose
+
+        if self.verbose:
+            print("=========================================")
+            print("----- Initializing SkinPatchDataset -----")
+            print(f"{'Skin type':<30}: {'Real' if isRealSkin else 'Fake'}")
+            print(f"{'Number of subjects':<30}: {num_subjects}")
+            print(f"{'Patches per subject':<30}: {patches_per_subject}")
+            print(f"{'Total patches':<30}: {num_subjects * patches_per_subject}")
+            print(f"{'Patch size':<30}: {patch_size}x{patch_size}")
+            print(f"{'Noise scale':<30}: {noise_scale}")
+            print("-----------------------------------------")
+
+        # Dataset parameters
+        self.num_subjects = num_subjects
+        self.randomize = randomize
+        self.patches_per_subject = patches_per_subject
+        self.patch_size = patch_size
+        self.noise_scale = noise_scale
+        self.isRealSkin = isRealSkin
+        self.total_patches = num_subjects * patches_per_subject
+
         # File paths
         R_real_csv_path = [
             '/cig/common05nb/students/denegasf/datasets/1832_Data_JResNIST_skinrefl_v3_average_only.csv'
@@ -108,11 +130,19 @@ class SkinPatchDataset(Dataset):
         ]
         sr_mat_path = '/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/grid_files_v2/combined_grid_stats.mat'
 
-        # Load and process reflectance data
-        self.R_real = self._load_reflectance(R_real_csv_path, interpolate=True, randomize=False, num_subjects=num_subjects)
-        self.R_fake = self._load_reflectance(R_fake_csv_path, interpolate=False, randomize=False, num_subjects=num_subjects)
+        # Load and process reflectance data based on isRealSkin
+        if isRealSkin:
+            if self.verbose:
+                print("-- Loading Real Skin Reflectance Data  --")
+            self.reflectance_data = self._load_reflectance(R_real_csv_path, interpolate=True, num_subjects=num_subjects)
+        else:
+            if self.verbose:
+                print("-- Loading Fake Skin Reflectance Data  --")
+            self.reflectance_data = self._load_reflectance(R_fake_csv_path, interpolate=False, num_subjects=num_subjects)
 
         # Load standard deviation data
+        if self.verbose:
+            print("---- Loading Standard Deviation Data ----")
         self.sr = loadmat(sr_mat_path)['std_of_mean_reflectance'][4][:31]
 
         # Sensor sensitivity (identity matrix for simplicity)
@@ -121,20 +151,15 @@ class SkinPatchDataset(Dataset):
         # Defined wavelength range (400–700 nm in 10 nm steps)
         self.wavelength = np.arange(400, 701, 10)
 
-        # Dataset parameters
-        self.num_subjects = num_subjects
-        self.patches_per_subject = patches_per_subject
-        self.patch_size = patch_size
-        self.noise_scale = noise_scale
-        self.isRealSkin = isRealSkin # Store the parch type
-        self.total_patches = num_subjects * patches_per_subject
-
         # Transformations
         self.transform = transform
         self.target_transform = target_transform
-        self.verbose = verbose
 
-    def _load_reflectance(self, csv_paths, interpolate=False, num_subjects=None, randomize=False):
+        if self.verbose:
+            print("-------- Initialization Complete --------")
+            print("=========================================")
+
+    def _load_reflectance(self, csv_paths, interpolate=False, num_subjects=None):
         """
         Load reflectance data from multiple CSV files.
         If interpolate=True, interpolate the data to match the wavelength range (400–700 nm in 10 nm steps).
@@ -150,6 +175,9 @@ class SkinPatchDataset(Dataset):
             wvl = np.arange(400, 701, 10)  # New wavelength range 
             
             if interpolate:
+                if self.verbose:
+                    print(f"{'Interpolation done':<30}: {'True' if interpolate else 'False'}")
+                    
                 # Interpolate reflectance to a new wavelength range (400 to 720 nm, 10 nm step)
                 interpolated_reflectance = np.zeros((len(wvl), reflectance.shape[1]))
                 for i in range(reflectance.shape[1]):
@@ -168,94 +196,49 @@ class SkinPatchDataset(Dataset):
         # If num_subjects is specified, select that many subjects
         if num_subjects:
             total_subjects = combined_reflectance.shape[1]
-
-            # Validate num_subjects
+            if self.verbose:
+                print(f"{'Total ' + ('real' if self.isRealSkin else 'fake') + ' skin subjects':<30}: {total_subjects}")
+                print(f"{'Selected subjects':<30}: {num_subjects}")
+                print(f"{'Randomize':<30}: {self.randomize}")
             if num_subjects > total_subjects:
                 raise ValueError(f"num_subjects ({num_subjects}) exceeds the number of available subjects ({total_subjects}).")
             if num_subjects < 1:
                 raise ValueError("num_subjects must be at least 1.")
 
-            if randomize:
-                # Randomly select subjects
+            if self.randomize:
                 selected_indices = np.random.choice(total_subjects, num_subjects, replace=False)
                 combined_reflectance = combined_reflectance[:, selected_indices]
             else:
-                # Select the first `num_subjects` subjects
                 combined_reflectance = combined_reflectance[:, :num_subjects]
+
+        if self.verbose:
+            print("--- Reflectance data loading complete ---")
+            print("-----------------------------------------")
 
         return combined_reflectance
 
-    def _apply_sensor_sensitivity(self, reflectance_cube):
-        """
-        Apply sensor sensitivity to the reflectance cube.
-        """
-        # Integrate with sensor sensitivity
-        intensity_cube = np.einsum('hwl,cl->hwc', reflectance_cube, self.sensor_sens)
-        return intensity_cube
-
-    def _add_sensor_noise(self, intensity_cube):
-        """
-        Add shot-like sensor noise to the intensity cube.
-        """
-        alpha = self.noise_scale
-        std_dev = alpha * np.sqrt(np.clip(intensity_cube, 1e-10, None))
-        noise = np.random.normal(loc=0.0, scale=std_dev)
-        intensity_cube_noisy = intensity_cube + noise
-        intensity_cube_noisy = np.clip(intensity_cube_noisy, 0.0, 1e3)  # Clip to a valid range
-        return intensity_cube_noisy
-
-    def _generate_patch(self, subject_id=None):
-        """
-        Generate a patch for the given data type ('real' or 'fake') and subject ID.
-        """
-        if self.isRealSkin:
-            reflectance_data = self.R_real
-        else:
-            reflectance_data = self.R_fake
-
-        # If subject_id is not provided, randomly select one
-        if subject_id is None:
-            subject_id = np.random.randint(0, reflectance_data.shape[1])
-
-        # Sample reflectance values with noise
-        reflectance_cube = np.random.normal(
-            loc=reflectance_data[:, subject_id],
-            scale=self.sr**2,
-            size=(self.patch_size, self.patch_size, reflectance_data.shape[0])
-        )
-
-        # Apply sensor sensitivity
-        intensity_cube = self._apply_sensor_sensitivity(reflectance_cube)
-
-        # Add sensor noise
-        intensity_cube_noisy = self._add_sensor_noise(intensity_cube)
-
-        # Convert to PyTorch tensor and permute to (bands, H, W)
-        patch_tensor = torch.tensor(intensity_cube_noisy, dtype=torch.float32)
-        patch_tensor = patch_tensor.permute(2, 0, 1)  # (bands, H, W)
-
-        return patch_tensor
-    
-    def __len__(self):
-        return self.total_patches
-
     def __getitem__(self, idx):
-        # Determine the data type based on isRealSkin
+        """
+        Get a patch and its label by index.
+        """
         subject_id = idx // self.patches_per_subject
 
-        # Generate the patch
+        if self.verbose:
+            print(f"----- Generating Patch -----")
+            print(f"Index: {idx}")
+            print(f"Subject ID: {subject_id}")
+            print(f"Skin Type: {'Real' if self.isRealSkin else 'Fake'}")
+
         patch_tensor = self._generate_patch(subject_id=subject_id)
 
         if self.transform:
             patch_tensor = self.transform(patch_tensor)
 
-        if self.verbose:
-            # Print or log the verbose information
-            print(f"Patch Generation Details:")
-            print(f"  - Skin Type: {'Real' if self.isRealSkin else 'Fake'}")
-            print(f"  - Label: {label}")  
-
-        # Assign labels: 0 for real, 1 for fake
         label = 0 if self.isRealSkin else 1
+
+        if self.verbose:
+            print(f"Patch generated successfully.")
+            print(f"Label: {label}")
+            print("-----------------------------------------")
 
         return patch_tensor, label, idx
