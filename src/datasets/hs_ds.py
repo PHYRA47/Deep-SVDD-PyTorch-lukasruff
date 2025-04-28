@@ -217,6 +217,36 @@ class SkinPatchDataset(Dataset):
 
         return combined_reflectance
 
+    def _generate_patch(self, subject_id=None):
+        """
+        Generate a patch for the given data type ('real' or 'fake') and subject ID.
+        """
+        # Use the loaded reflectance data
+        reflectance_data = self.reflectance_data
+
+        # If subject_id is not provided, randomly select one
+        if subject_id is None:
+            subject_id = np.random.randint(0, reflectance_data.shape[1])
+
+        # Sample reflectance values with noise
+        reflectance_cube = np.random.normal(
+            loc=reflectance_data[:, subject_id],
+            scale=self.sr**2,
+            size=(self.patch_size, self.patch_size, reflectance_data.shape[0])
+        )
+
+        # Apply sensor sensitivity
+        intensity_cube = self._apply_sensor_sensitivity(reflectance_cube)
+
+        # Add sensor noise
+        intensity_cube_noisy = self._add_sensor_noise(intensity_cube)
+
+        # Convert to PyTorch tensor and permute to (bands, H, W)
+        patch_tensor = torch.tensor(intensity_cube_noisy, dtype=torch.float32)
+        patch_tensor = patch_tensor.permute(2, 0, 1)  # (bands, H, W)
+
+        return patch_tensor
+    
     def __getitem__(self, idx):
         """
         Get a patch and its label by index.
