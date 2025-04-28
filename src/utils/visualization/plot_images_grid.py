@@ -20,6 +20,8 @@ def plot_images_grid(x: torch.tensor, export_img, title: str = '', nrow=8, paddi
         green_channel = x[:, 15, :, :].unsqueeze(1) * d65_illuminant[1]
         blue_channel = x[:, 5, :, :].unsqueeze(1) * d65_illuminant[2]
 
+        x_rgb = torch.cat([red_channel, green_channel, blue_channel], dim=1)
+
         x_rgb = x_rgb / x_rgb.max()
 
     else:
