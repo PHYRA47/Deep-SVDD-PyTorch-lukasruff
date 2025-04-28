@@ -12,6 +12,7 @@ from prettytable import PrettyTable
 
 
 class HS_Dataset(TorchvisionDataset):
+   
     def __init__(self, 
                  num_subjects=10, 
                  patches_per_subject=10, 
@@ -44,37 +45,36 @@ class HS_Dataset(TorchvisionDataset):
         # Test set: Mix of real and fake patches
 
         # Percentage of fake patches in the test set
-        fake_percentage = 50
+        fake_percentage = 0.6 # 60% fake patches
 
-        num_fake_patches = int((fake_percentage / 100) * num_subjects * patches_per_subject)
+        num_fake_patches = int((fake_percentage) * num_subjects * patches_per_subject)
         num_real_patches = (num_subjects * patches_per_subject) - num_fake_patches
 
         # Real patches for the test set
         self.test_real_set = SkinPatchDataset(
-            num_subjects=num_subjects,
+            num_subjects=100,
             patches_per_subject=num_real_patches // num_subjects,
             patch_size=patch_size,
             noise_scale=noise_scale,
             isRealSkin=True,  # Real patches
             transform=transform,
-            target_transform=None
         )
 
         # Fake patches for the test set
         self.test_fake_set = SkinPatchDataset(
-            num_subjects=num_subjects,
+            num_subjects=100,
             patches_per_subject=num_fake_patches // num_subjects,
             patch_size=patch_size,
             noise_scale=noise_scale,
             isRealSkin=False,  # Fake patches
             transform=transform,
-            target_transform=None
         )
 
         # Combine real and fake test sets
         self.test_set = torch.utils.data.ConcatDataset([self.test_real_set, self.test_fake_set])
 
 class SkinPatchDataset(Dataset):
+    
     def __init__(self, 
                  num_subjects=10, 
                  randomize=False,
@@ -242,3 +242,24 @@ class SkinPatchDataset(Dataset):
             print("-----------------------------------------")
 
         return patch_tensor, label, idx
+
+    def __len__(self):
+        return self.total_patches
+    def _apply_sensor_sensitivity(self, reflectance_cube):
+        """
+        Apply sensor sensitivity to the reflectance cube.
+        """
+        # Integrate with sensor sensitivity
+        intensity_cube = np.einsum('hwl,cl->hwc', reflectance_cube, self.sensor_sens)
+        return intensity_cube
+
+    def _add_sensor_noise(self, intensity_cube):
+        """
+        Add shot-like sensor noise to the intensity cube.
+        """
+        alpha = self.noise_scale
+        std_dev = alpha * np.sqrt(np.clip(intensity_cube, 1e-10, None))
+        noise = np.random.normal(loc=0.0, scale=std_dev)
+        intensity_cube_noisy = intensity_cube + noise
+        intensity_cube_noisy = np.clip(intensity_cube_noisy, 0.0, 1e3)  # Clip to a valid range
+        return intensity_cube_noisy
