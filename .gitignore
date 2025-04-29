@@ -1,6 +1,6 @@
 # My ignore file
 log/
-script.ipynb/
+**/script.ipynb
 data/
 
 # Byte-compiled / optimized / DLL files
