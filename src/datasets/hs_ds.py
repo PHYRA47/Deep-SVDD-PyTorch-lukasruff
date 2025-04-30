@@ -17,7 +17,8 @@ class HS_Dataset(TorchvisionDataset):
                  num_subjects=10, 
                  patches_per_subject=10, 
                  patch_size=32, 
-                 noise_scale=0.025):
+                 noise_scale=0.025,
+                 transform=None):
         
         super().__init__(root=None)  # No root directory needed for on-the-fly generation
 
@@ -25,12 +26,16 @@ class HS_Dataset(TorchvisionDataset):
         min_value, max_value = (-2.0743157863616943, 3.0839202404022217) # data from 10 sub 10 patches/sub
         # (-2.3745954036712646, 3.5976827144622803) # data from 100 sub 50 patches/sub
         
-        # Preprocessing: GCN (with L1 norm) and min-max feature scaling 
-        transform = transforms.Compose([
-            # transforms.ToTensor(),
-            transforms.Lambda(lambda x: global_contrast_normalization(x, scale='l1')),
-            transforms.Normalize([min_value] * 31, [max_value - min_value] * 31)
-        ])
+        # If transform is None, do not apply any transformations
+        if transform is None:
+            self.transform = None
+        else:
+            # Default transform is to apply GCN and min-max scaling
+            self.transform = transforms.Compose([
+                # transforms.ToTensor(),
+                transforms.Lambda(lambda x: global_contrast_normalization(x, scale='l1')),
+                transforms.Normalize([min_value] * 31, [max_value - min_value] * 31)
+            ])
 
         # Train set: Only real patches
         self.train_set = SkinPatchDataset(
