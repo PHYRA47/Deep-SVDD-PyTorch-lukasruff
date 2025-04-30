@@ -13,7 +13,7 @@ def plot_images_grid(x: torch.tensor, export_img, title: str = '', nrow=8, paddi
     # Convert hyperspectral data to RGB by selecting specific channels
     if x.shape[1] == 31:  # Check if the tensor has 31 channels (hyperspectral data)
 
-        data = [0.800268, 1.04046, 1.17008] # [0.95047, 1.00000, 1.08883]
+        data = [1, 1, 1] # [0.800268, 1.04046, 1.17008] # [0.95047, 1.00000, 1.08883]
         d65_illuminant = torch.tensor(data, device=x.device) 
 
         red_channel = x[:, 25, :, :].unsqueeze(1) * d65_illuminant[0]
