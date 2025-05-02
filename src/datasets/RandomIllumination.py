@@ -37,6 +37,10 @@ class RandomIllumination:
             self.illum_sources.append(target_sd_interpolated / np.max(target_sd_interpolated))
         
     def __call__(self, x): 
+        
+        if random.random() > self.p:
+            return x, "None"
+        
         # x is a torch.Tensor, shape [C, H, W] or [bands, H, W]
         illum_index = random.randint(0, len(self.illum_sources) - 1)
         target_illum = torch.from_numpy(self.illum_sources[illum_index]).float()
