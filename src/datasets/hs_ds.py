@@ -300,7 +300,20 @@ class SkinPatchDataset(Dataset):
     def __len__(self):
         return self.total_patches
     
+    def _apply_illumination(self, reflectance_cube):
+        """
+        Apply random illumination to the reflectance cube using RandomIllumination.
+        """
+        # Convert reflectance_cube to a PyTorch tensor and permute to (bands, H, W)
+        reflectance_tensor = torch.tensor(reflectance_cube, dtype=torch.float32).permute(2, 0, 1)  # (bands, H, W)
+        
+        # Apply random illumination
+        augmented_tensor, illuminant = self.random_illum(reflectance_tensor)
 
+        # Convert back to numpy and permute to (H, W, bands)
+        illuminated_cube = augmented_tensor.permute(1, 2, 0).numpy()  # Convert back to (H, W, bands)
+
+        return illuminated_cube, illuminant
 
     def _apply_sensor_sensitivity(self, reflectance_cube):
         """
