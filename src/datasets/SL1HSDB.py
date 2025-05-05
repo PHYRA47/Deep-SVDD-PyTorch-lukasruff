@@ -6,7 +6,14 @@ import torch
 from torch.utils.data import Dataset
 
 class SL1HSDB(Dataset):
-    def __init__(self, patch_size=32, interpolate=True, patches_per_file=1, overlapping=False):
+    def __init__(self, 
+                 idx=None,
+                 patch_size=32, 
+                 interpolate=True, 
+                 patches_per_file=1, 
+                 overlapping=False,
+                 
+                 verbose=False):    
         """
         Initialize the dataset.
 
@@ -21,6 +28,9 @@ class SL1HSDB(Dataset):
         self.interpolate = interpolate
         self.patches_per_file = patches_per_file
         self.overlapping = overlapping
+        self.idx = idx
+
+        self.verbose = verbose
 
         # Load all .mat files in the specified path
         self.mat_files = [f for f in os.listdir(self.path) if f.endswith('.mat')]
@@ -29,7 +39,7 @@ class SL1HSDB(Dataset):
         if self.interpolate:
             self.target_wavelengths = np.linspace(400, 700, 31)
 
-    def _load_reflectance(self, idx=None, ):
+    def _load_reflectance(self):
         """
         Load reflectance data from the .mat file. If idx is not provided, randomly pick one.
 
@@ -41,7 +51,9 @@ class SL1HSDB(Dataset):
                 - Reflectance data.
                 - Name of the picked file.
         """
-        if idx is None:
+        if self.idx is not None:
+            idx = self.idx
+        else:
             idx = random.randint(0, len(self.mat_files) - 1)
 
         file_name = self.mat_files[idx]
@@ -51,7 +63,7 @@ class SL1HSDB(Dataset):
         reflectance = hsi_data['reflectance'][0][0]
 
         if self.verbose:
-            pass
+            pass # print(f"Loading {file_name} with shape {reflectance.shape}")
 
         # Interpolate reflectance if required
         if self.interpolate:
@@ -66,47 +78,40 @@ class SL1HSDB(Dataset):
 
         return reflectance, file_name
 
-    def _generate_patches(self, reflectance, idx):
+    def _generate_patches(self, idx):
         """
         Generate patches from the reflectance data.
 
         Args:
-            reflectance (np.ndarray): Reflectance data.
             idx (int): Index of the .mat file.
 
         Returns:
             list of tuples: [(patch_tensor, label, global_idx), ...]
         """
+        # Load reflectance data
+        reflectance, file_name = self._load_reflectance()
+
+        # Determine stride based on overlapping
+        random_stride = self.patch_size // 2 if self.overlapping else self.patch_size
+
         h, w = reflectance.shape[1], reflectance.shape[2]
         patches = []
 
-        if not self.overlapping:
-            # Non-overlapping patches
-            num_patches_h = h // self.patch_size
-            num_patches_w = w // self.patch_size
-            possible_positions = [
-                (i * self.patch_size, j * self.patch_size)
-                for i in range(num_patches_h)
-                for j in range(num_patches_w)
-            ]
-            random.shuffle(possible_positions)
-            for i in range(min(self.patches_per_file, len(possible_positions))):
-                top, left = possible_positions[i]
-                patch = reflectance[:, top:top + self.patch_size, left:left + self.patch_size]
-                patches.append((torch.tensor(patch, dtype=torch.float32), 0, idx))
-        else:
-            # Overlapping patches
-            stride = self.patch_size // 2  # 50% overlap
-            possible_positions = [
-                (i, j)
-                for i in range(0, h - self.patch_size + 1, stride)
-                for j in range(0, w - self.patch_size + 1, stride)
-            ]
-            random.shuffle(possible_positions)
-            for i in range(min(self.patches_per_file, len(possible_positions))):
-                top, left = possible_positions[i]
-                patch = reflectance[:, top:top + self.patch_size, left:left + self.patch_size]
-                patches.append((torch.tensor(patch, dtype=torch.float32), 0, idx))
+        # Generate patches with the determined stride
+        possible_positions = [
+            (i, j)
+            for i in range(0, h - self.patch_size + 1, random_stride)
+            for j in range(0, w - self.patch_size + 1, random_stride)
+        ]
+
+        # Shuffle positions to introduce randomness
+        random.shuffle(possible_positions)
+
+        # Select up to patches_per_file positions
+        for i in range(min(self.patches_per_file, len(possible_positions))):
+            top, left = possible_positions[i]
+            patch = reflectance[:, top:top + self.patch_size, left:left + self.patch_size]
+            patches.append((torch.tensor(patch, dtype=torch.float32), 0, idx))
 
         return patches
 
@@ -126,10 +131,15 @@ class SL1HSDB(Dataset):
                 - label (int): Label indicating real skin (0).
                 - global_idx (int): Global index of the patch.
         """
-        # Load reflectance data
-        reflectance = self._load_reflectance(idx)
+        # Assign label based on skin type
+        label = 0
 
         # Generate patches
-        patches = self._generate_patches(reflectance, idx)
+        patch_tensor = self._generate_patches(idx)
 
-        return patches
+        if hasattr(self, 'global_offset'):
+            global_idx = idx + self.global_offset
+        else:
+            global_idx = idx
+
+        return patch_tensor, label, global_idx
