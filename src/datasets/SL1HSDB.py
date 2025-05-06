@@ -141,7 +141,7 @@ class SL1HSDBDataset(Dataset):
 
 
 class MultiSubjectSL1HSDBDataset(SL1HSDBDataset):
-    def __init__(self, num_subjects=70, randomize=True, patches_per_file=1, verbose=False, **kwargs):
+    def __init__(self, num_subjects=70, randomize=True, patches_per_file=1, transform=None, verbose=False, **kwargs):
         """
         Derived class for generating patches from multiple .mat files.
 
@@ -154,6 +154,7 @@ class MultiSubjectSL1HSDBDataset(SL1HSDBDataset):
         super().__init__(file_idx=0, patches_per_file=patches_per_file, **kwargs)
         self.num_subjects = num_subjects
         self.randomize = randomize
+        self.transform = transform
         self.verbose = verbose
 
         # Select files based on num_subjects and randomize
@@ -195,8 +196,16 @@ class MultiSubjectSL1HSDBDataset(SL1HSDBDataset):
         # Ensure we don't exceed the number of available patches
         patch_tensor, coordinates = patches[patch_idx % len(patches)]
 
+        if self.transform:
+            patch_tensor = self.transform(patch_tensor)
+
         label = 0  # Label indicating real skin
-        global_idx = idx
+        
+        # Convert coordinates to global index
+        if hasattr(self, 'global_offset'):
+            global_idx = idx + self.global_offset
+        else:
+            global_idx = idx
 
         if self.verbose:
             if idx == 0:  # Print the header only once when the method is called
