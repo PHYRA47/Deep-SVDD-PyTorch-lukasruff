@@ -2,14 +2,14 @@ import torch
 import numpy as np
 import pandas as pd
 from scipy.io import loadmat
-from scipy.interpolate import interp1d
-from torch.utils.data import Dataset
-import torchvision.transforms as transforms
-
-from base.torchvision_dataset import TorchvisionDataset
-from .preprocessing import get_target_label_idx, global_contrast_normalization
-from .RandomIllumination import RandomIllumination
 from prettytable import PrettyTable
+from torch.utils.data import Dataset
+from scipy.interpolate import interp1d
+import torchvision.transforms as transforms
+from base.torchvision_dataset import TorchvisionDataset
+
+from .RandomIllumination import RandomIllumination
+from .preprocessing import get_target_label_idx, global_contrast_normalization
 
 
 class HS_Dataset(TorchvisionDataset):
@@ -89,13 +89,13 @@ class SkinPatchDataset(Dataset):
     
     def __init__(self, 
                  num_subjects=10, 
-                 randomize=False,
+                 randomize=True,
                  patches_per_subject=10, 
                  patch_size=16, 
-                 noise_scale=0.025, 
 
                  isRealSkin=True,
                  applyRandomIllumination=True,
+                 applyNoise=True,
                  
                  transform=None, 
                  verbose=False):
@@ -116,13 +116,12 @@ class SkinPatchDataset(Dataset):
 
         if self.verbose:
             print(f"{'Initializing SkinPatchDataset'.center(42, '=')}")
-            print(f"{'Skin type':<30}: {'Real' if isRealSkin else 'Fake':>10}")
+            print(f"{'Real Skin':<30}: {str(isRealSkin):>10}")
+            print(f"{'Randome Illumination':<30}: {str(applyRandomIllumination):>10}")
             print(f"{'Number of subjects':<30}: {num_subjects:>10}")
             print(f"{'Patches per subject':<30}: {patches_per_subject:>10}")
             print(f"{'Total patches':<30}: {num_subjects * patches_per_subject:>10}")
             print(f"{'Patch size':<30}: {f'{patch_size} x {patch_size}':>10}")
-            print(f"{'Noise scale':<30}: {noise_scale:>10}")
-            print(f"{'Randome Illumination':<30}: {str(applyRandomIllumination):>10}")
             # print("-"*42)
 
         # Dataset parameters
@@ -130,11 +129,11 @@ class SkinPatchDataset(Dataset):
         self.randomize = randomize
         self.patches_per_subject = patches_per_subject
         self.patch_size = patch_size
-        self.noise_scale = noise_scale
         self.total_patches = num_subjects * patches_per_subject
         
         self.isRealSkin = isRealSkin
         self.applyRandomIllumination = applyRandomIllumination
+        self.applyNoise = applyNoise
 
         # File paths
         R_real_csv_path = [
@@ -147,23 +146,24 @@ class SkinPatchDataset(Dataset):
         sr_mat_path = '/cig/common05nb/students/denegasf/datasets/UMINHO-HSFD/grid_files_v2/combined_grid_stats.mat'
 
         # Load and process reflectance data based on isRealSkin
+        if self.verbose:
+            print(f"{'Loading ' + ('Real' if isRealSkin else 'Fake') + ' skin reflectance data'}".center(42, '-'))
         if isRealSkin:
-            if self.verbose:
-                print(f"{'Loading real skin reflectance data'.center(42, '-')}")
             self.reflectance_data = self._load_reflectance(R_real_csv_path, interpolate=True, num_subjects=num_subjects)
         else:
-            if self.verbose:
-                print(f"{'Loading fake skin reflectance data'.center(42, '-')}")
             self.reflectance_data = self._load_reflectance(R_fake_csv_path, interpolate=False, num_subjects=num_subjects)
 
         # Load standard deviation data
         self.sr = loadmat(sr_mat_path)['std_of_mean_reflectance'][4][:31]
 
         # Initialize random illumination
-        self.random_illum = RandomIllumination(p=1.0)  # Always apply illumination
+        self.random_illum = RandomIllumination(p=0.7)  # Probability of applying random illumination
         
         # Sensor sensitivity (identity matrix for simplicity)
         self.sensor_sens = np.eye(31)
+
+        # Noise scale
+        self.noise_scale = 0.025
 
         # Transformations
         self.transform = transform
@@ -233,73 +233,6 @@ class SkinPatchDataset(Dataset):
 
         return combined_reflectance
 
-    def _generate_patch(self):
-        """
-        Generate a patch for the given data type ('real' or 'fake') and subject ID.
-        """
-        # Use the loaded reflectance data
-        reflectance_data = self.reflectance_data[1:]
-        reflectance_idx = self.reflectance_data[0]
-
-        # If subject_id is not provided, randomly select one
-        idx = np.random.randint(0, reflectance_data.shape[1])
-
-        # Sample reflectance values with noise
-        reflectance_cube = np.random.normal(
-            loc=reflectance_data[:, idx],
-            scale=self.sr**2,
-            size=(self.patch_size, self.patch_size, reflectance_data.shape[0])
-        )
-        
-        # Apply illumnation spectrum
-        if self.applyRandomIllumination:
-            reflectance_cube, illuminant = self._apply_illumination(reflectance_cube)
-            
-        # Apply sensor sensitivity
-        intensity_cube = self._apply_sensor_sensitivity(reflectance_cube)
-
-        # Add sensor noise
-        intensity_cube_noisy = self._add_sensor_noise(intensity_cube)
-
-        # Convert to PyTorch tensor and permute to (bands, H, W)
-        patch_tensor = torch.tensor(intensity_cube_noisy, dtype=torch.float32)
-        patch_tensor = patch_tensor.permute(2, 0, 1)  # (bands, H, W)
-
-        return patch_tensor, int(reflectance_idx[idx]), illuminant if self.applyRandomIllumination else 'None'
-    
-    def __getitem__(self, idx):
-        """
-        Get a patch and its label by index.
-        """
-        # Generate a patch
-        patch_tensor, csv_column_idx, illuminant = self._generate_patch()
-
-        if self.transform:
-            patch_tensor = self.transform(patch_tensor)
-
-        # Assign label based on skin type
-        label = 0 if self.isRealSkin else 1
-
-        # Return the patch, label, and global index
-        if hasattr(self, 'global_offset'):
-            global_idx = idx + self.global_offset
-        else:
-            global_idx = idx
-
-        if self.verbose:
-            print(f"Generating Patch".center(32, '-'))
-            print(f"{'Index':<20}: {idx:>10}")
-            print(f"{'Skin Type':<20}: {'Real' if self.isRealSkin else 'Fake':>10}")
-            print(f"{'Patch size':<20}: {f'{self.patch_size} x {self.patch_size}':>10}")
-            print(f"{'Reflectance idx':<20}: {csv_column_idx:>10}")
-            print(f"{'Illuminant':<20}: {illuminant:>10}")
-            print("-"*32)
-
-        return patch_tensor, label, global_idx
-
-    def __len__(self):
-        return self.total_patches
-    
     def _apply_illumination(self, reflectance_cube):
         """
         Apply random illumination to the reflectance cube using RandomIllumination.
@@ -333,3 +266,71 @@ class SkinPatchDataset(Dataset):
         intensity_cube_noisy = intensity_cube + noise
         intensity_cube_noisy = np.clip(intensity_cube_noisy, 0.0, 1e3)  # Clip to a valid range
         return intensity_cube_noisy
+
+    def _generate_patch(self):
+        """
+        Generate a patch for the given data type ('real' or 'fake') and subject ID.
+        """
+        # Use the loaded reflectance data
+        reflectance_data = self.reflectance_data[1:]
+        reflectance_idx = self.reflectance_data[0]
+
+        # If subject_id is not provided, randomly select one
+        idx = np.random.randint(0, reflectance_data.shape[1])
+
+        # Sample reflectance values with noise
+        reflectance_cube = np.random.normal(
+            loc=reflectance_data[:, idx],
+            scale=self.sr**2,
+            size=(self.patch_size, self.patch_size, reflectance_data.shape[0])
+        )
+        
+        # Apply illumnation spectrum
+        if self.applyRandomIllumination:
+            reflectance_cube, illuminant = self._apply_illumination(reflectance_cube)
+            
+        # Apply sensor sensitivity
+        intensity_cube = self._apply_sensor_sensitivity(reflectance_cube)
+
+        # Add sensor noise
+        if self.applyNoise:
+            intensity_cube = self._add_sensor_noise(intensity_cube)
+
+        # Convert to PyTorch tensor and permute to (bands, H, W)
+        patch_tensor = torch.tensor(intensity_cube, dtype=torch.float32)
+        patch_tensor = patch_tensor.permute(2, 0, 1)  # (bands, H, W)
+
+        return patch_tensor, int(reflectance_idx[idx]), illuminant if self.applyRandomIllumination else 'None'
+    
+    def __getitem__(self, idx):
+        """
+        Get a patch and its label by index.
+        """
+        # Generate a patch
+        patch_tensor, csv_column_idx, illuminant = self._generate_patch()
+
+        if self.transform:
+            patch_tensor = self.transform(patch_tensor)
+
+        # Assign label based on skin type
+        label = 0 if self.isRealSkin else 1
+
+        # Return the patch, label, and global index
+        if hasattr(self, 'global_offset'):
+            global_idx = idx + self.global_offset
+        else:
+            global_idx = idx
+
+        if self.verbose:
+            print(f"Generating Patch".center(32, '-'))
+            print(f"{'Index':<20}: {idx:>10}")
+            print(f"{'Skin Type':<20}: {'Real' if self.isRealSkin else 'Fake':>10}")
+            print(f"{'Patch size':<20}: {f'{self.patch_size} x {self.patch_size}':>10}")
+            print(f"{'Reflectance idx':<20}: {csv_column_idx:>10}")
+            print(f"{'Illuminant':<20}: {illuminant[:8]:>10}")
+            print("-"*32)
+
+        return patch_tensor, label, global_idx
+
+    def __len__(self):
+        return self.total_patches
