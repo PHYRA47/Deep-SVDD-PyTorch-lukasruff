@@ -2,7 +2,7 @@ from base.base_trainer import BaseTrainer
 from base.base_dataset import BaseADDataset
 from base.base_net import BaseNet
 from torch.utils.data.dataloader import DataLoader
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve, precision_score, recall_score, f1_score, confusion_matrix, precision_recall_curve
 
 import logging
 import time
@@ -153,6 +153,62 @@ class DeepSVDDTrainer(BaseTrainer):
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
 
+        # Compute Accuracy
+        # Using Youden's J statistic and F1 score
+        fpr, tpr, thresholds = roc_curve(labels, scores)
+        youden_j = tpr - fpr  # Youden's J statistic (maximizing sensitivity + specificity - 1)
+        optimal_idx = np.argmax(youden_j)
+        optimal_threshold_youden_j = thresholds[optimal_idx]
+        # Using F1 score
+        _, _, thresholds = precision_recall_curve(labels, scores)
+        f1_scores = [f1_score(labels, (scores >= t).astype(int)) for t in thresholds]
+        optimal_idx = np.argmax(f1_scores)
+        optimal_threshold_f1 = thresholds[optimal_idx]
+
+        # Predict labels using the optimal threshold
+        predictions_youden_j = (scores >= optimal_threshold_youden_j).astype(int)
+        predictions_f1 = (scores >= optimal_threshold_f1).astype(int)
+
+        accuracy_youden_j = np.mean(predictions_youden_j == labels)
+        accuracy_f1 = np.mean(predictions_f1 == labels)
+
+        if np.isclose(accuracy_youden_j, accuracy_f1):
+            self.test_accuracy = accuracy_youden_j
+            logger.info('Test set Accuracy: {:.2f}% (Same for both thresholds: {:.2f})'.format(100. * self.test_accuracy, optimal_threshold_youden_j))
+            
+            # Compute metrics based on Youden's J threshold
+            self.test_conf_matrix = confusion_matrix(labels, predictions_youden_j)
+            self.test_precision = precision_score(labels, predictions_youden_j)
+            self.test_recall = recall_score(labels, predictions_youden_j)
+            self.test_f1 = f1_score(labels, predictions_youden_j)
+        else:
+            self.test_accuracy = [accuracy_youden_j, accuracy_f1]
+            logger.info('Test set Accuracy: {:.2f}% (Youden J Threshold: {:.2f})'.format(100. * self.test_accuracy[0], optimal_threshold_youden_j))
+            logger.info('Test set Accuracy: {:.2f}% (F1 Threshold: {:.2f})'.format(100. * self.test_accuracy[1], optimal_threshold_f1))
+            
+            # Compute metrics based on both thresholds
+            self.test_conf_matrix = {
+            'youden_j': confusion_matrix(labels, predictions_youden_j),
+            'f1': confusion_matrix(labels, predictions_f1)
+            }
+            self.test_precision = {
+            'youden_j': precision_score(labels, predictions_youden_j),
+            'f1': precision_score(labels, predictions_f1)
+            }
+            self.test_recall = {
+            'youden_j': recall_score(labels, predictions_youden_j),
+            'f1': recall_score(labels, predictions_f1)
+            }
+            self.test_f1 = {
+            'youden_j': f1_score(labels, predictions_youden_j),
+            'f1': f1_score(labels, predictions_f1)
+            }
+            
+        logger.info('Test set Precision: {:.2f}'.format(self.test_precision if isinstance(self.test_precision, float) else self.test_precision['youden_j']))
+        logger.info('Test set Recall: {:.2f}'.format(self.test_recall if isinstance(self.test_recall, float) else self.test_recall['youden_j']))
+        logger.info('Test set F1 Score: {:.2f}'.format(self.test_f1 if isinstance(self.test_f1, float) else self.test_f1['youden_j']))
+        logger.info('Test set Confusion Matrix:\n{}'.format(self.test_conf_matrix if isinstance(self.test_conf_matrix, np.ndarray) else self.test_conf_matrix['youden_j']))
+        
         logger.info('Finished testing.')
 
     def init_center_c(self, train_loader: DataLoader, net: BaseNet, eps=0.1):
