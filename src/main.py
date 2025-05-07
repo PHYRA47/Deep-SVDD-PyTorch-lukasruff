@@ -1,14 +1,16 @@
+import csv
 import click
 import torch
 import logging
 import random
 import numpy as np
+import matplotlib.pyplot as plt
 
 from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
 from deepSVDD import DeepSVDD
 from datasets.main import load_dataset
-from prettytable import PrettyTable
+from sklearn.metrics import roc_curve, auc
 
 
 ################################################################################
@@ -168,22 +170,39 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
     # Plot most anomalous and most normal (within-class) test samples
     indices, labels, scores = zip(*deep_SVDD.results['test_scores'])
 
-    print('Number of test samples: %d' % len(indices))
-    print('Number of normal test samples: %d' % np.sum(np.array(labels) == 0))
-    print('Number of anomalous test samples: %d' % np.sum(np.array(labels) == 1))
+    # ===================================================
+    # Compute and print AUC
+    # ===================================================
 
-    print('Number of test samples with score > 0.5: %d' % np.sum(np.array(scores) > 0.5))
-    print('Number of test samples with score < 0.5: %d' % np.sum(np.array(scores) < 0.5))
+    fpr, tpr, thresholds = roc_curve(labels, scores)
+    roc_auc = auc(fpr, tpr)
 
-    # Create a table to display indices and scores
-    table = PrettyTable()
-    table.field_names = ["Index", "Label", "Score"]
-    for idx, label, score in zip(indices, labels, scores):
-        table.add_row([idx, label, score])
-    results_file = xp_path + '/results.txt'
-    with open(results_file, 'w') as f:
-        f.write(str(table))
-    logger.info('Results table exported to %s.' % results_file)
+    # Plot ROC curve
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    roc_curve_path = xp_path + '/roc_curve.png'
+    plt.savefig(roc_curve_path)
+    plt.close()
+    logger.info('ROC curve saved to %s.' % roc_curve_path)
+
+    # ===================================================
+    # Save indices, labels, and scores in a CSV format 
+    # ===================================================
+    results_file = xp_path + '/results.csv'
+    with open(results_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Index", "Label", "Score"])  # Write header
+        writer.writerows(zip(indices, labels, scores))  # Write data rows
+
+    logger.info('Results saved in CSV format to %s.' % results_file)
+    # ===================================================
 
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
 
