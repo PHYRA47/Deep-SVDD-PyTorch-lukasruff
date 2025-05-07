@@ -8,6 +8,7 @@ from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
 from deepSVDD import DeepSVDD
 from datasets.main import load_dataset
+from prettytable import PrettyTable
 
 
 ################################################################################
@@ -166,23 +167,42 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
 
     # Plot most anomalous and most normal (within-class) test samples
     indices, labels, scores = zip(*deep_SVDD.results['test_scores'])
+
+    print('Number of test samples: %d' % len(indices))
+    print('Number of normal test samples: %d' % np.sum(np.array(labels) == 0))
+    print('Number of anomalous test samples: %d' % np.sum(np.array(labels) == 1))
+
+    print('Number of test samples with score > 0.5: %d' % np.sum(np.array(scores) > 0.5))
+    print('Number of test samples with score < 0.5: %d' % np.sum(np.array(scores) < 0.5))
+
+    # Create a table to display indices and scores
+    table = PrettyTable()
+    table.field_names = ["Index", "Label", "Score"]
+    for idx, label, score in zip(indices, labels, scores):
+        table.add_row([idx, label, score])
+    results_file = xp_path + '/results.txt'
+    with open(results_file, 'w') as f:
+        f.write(str(table))
+    logger.info('Results table exported to %s.' % results_file)
+
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
-    idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
 
     if dataset_name in ('mnist', 'cifar10', 'hs_ds'):
 
         if dataset_name == 'mnist':
+            idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
             X_normals = dataset.test_set.test_data[idx_sorted[:32], ...].unsqueeze(1)
             X_outliers = dataset.test_set.test_data[idx_sorted[-32:], ...].unsqueeze(1)
 
         if dataset_name == 'cifar10':
+            idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
             X_normals = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[:32], ...], (0, 3, 1, 2)))
             X_outliers = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[-32:], ...], (0, 3, 1, 2)))
 
         if dataset_name == 'hs_ds':
+            idx_sorted = indices[np.argsort(scores)]  # sorted from lowest to highest anomaly score
             X_normals = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[:32]])  
             X_outliers = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[-32:]])  
-
 
         plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
         plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
@@ -195,38 +215,3 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
 
 if __name__ == '__main__':
     main()
-
-# Example command to run the script:
-"""
- python main.py hs_ds HSNet ../log/hs_test ../data \
- --objective one-class \
- --lr 0.0001 \
- --n_epochs 150 \
- --lr_milestone 50 \
- --batch_size 200 \
- --weight_decay 0.5e-6 \
- --pretrain True \
- --ae_lr 0.0001 \
- --ae_n_epochs 150 \
- --ae_lr_milestone 50 \
- --ae_batch_size 200 \
- --ae_weight_decay 0.5e-3 \
- --normal_class 3
-
-"""
-"""
- python main.py hs_ds HSNet ../log/hs_test ../data \
- --n_epochs 1 \
- --batch_size 10 \
- --ae_n_epochs 1 \
- --ae_batch_size 10 
-
-"""
-# Example command to run the script for hyperspectral data:
-# python main.py hyperspectral my_hyperspectral_net ../log/hyperspectral_test ../data \
-# --objective one-class \
-# --lr 0.0001 \
-# --n_epochs 150 \
-# --batch_size 200 \
-# --pretrain True \
-# --normal_class 0
