@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --exclude=destc0strapp03
-#SBATCH --output=slurm-logs/training/output.log
-#SBATCH --error=slurm-logs/training/error.log
+#SBATCH --output=slurm-logs/training/test1/output.log
+#SBATCH --error=slurm-logs/training/test1/error.log
 
 # Load conda/mamba properly for SLURM
 source ~/.bashrc
@@ -19,4 +19,4 @@ conda activate venv
 nvidia-smi
 
 # Run the training script
-python main.py hs_ds HSNet ../log/test1 ../data --n_epochs 10 --batch_size 128 --ae_n_epochs 40 --ae_batch_size 128
+python main.py hs_ds HSNet ../log/test1 ../data --n_epochs 4 --batch_size 32 --ae_n_epochs 10 --ae_batch_size 32
