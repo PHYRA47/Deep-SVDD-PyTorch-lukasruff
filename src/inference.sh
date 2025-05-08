@@ -16,4 +16,5 @@ python main.py hs_ds HSNet \
     ../data \
     --load_model ../log/test1/model.tar \
     --pretrain False \
-    --n_epochs 0
+    --n_epochs 0 \ 
+    --threshold 0.35 \

@@ -1,6 +1,6 @@
 from .mnist import MNIST_Dataset
 from .cifar10 import CIFAR10_Dataset
-from .hs_ds import HS_Dataset
+from .hs_ds import HS_Dataset, HS_Dataset_Inference
 
 
 def load_dataset(dataset_name, data_path, normal_class):
@@ -18,6 +18,6 @@ def load_dataset(dataset_name, data_path, normal_class):
         dataset = CIFAR10_Dataset(root=data_path, normal_class=normal_class)
 
     if dataset_name == 'hs_ds':
-        dataset = HS_Dataset()
+        dataset = HS_Dataset_Inference()
 
     return dataset

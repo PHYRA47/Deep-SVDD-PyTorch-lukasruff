@@ -108,3 +108,82 @@ class HS_Dataset(TorchvisionDataset):
             #self.test_real_set_2,
             self.test_fake_set
         ])
+
+# Inference dataset
+
+class HS_Dataset_Inference(TorchvisionDataset):
+   
+    def __init__(self, 
+                 patch_size=32,
+                 applyTransform=True):
+        
+        super().__init__(root=None)  # No root directory needed for on-the-fly generation
+        
+        self.applyTransform = applyTransform
+        self.patch_size = patch_size
+
+        # Pre-computed min and max values (after applying GCN)  
+        min_value, max_value = (-2.0743157863616943, 3.0839202404022217) # data from 10 sub 10 patches/sub
+        
+        if self.applyTransform:
+            # Transformations for the dataset
+            transform = transforms.Compose([
+                    transforms.Lambda(lambda x: global_contrast_normalization(x, scale='l1')),
+                    transforms.Normalize([min_value] * 31, [max_value - min_value] * 31)
+                ])
+            print("Transformations applied")
+        else:
+            transform = None
+            print("No transformations applied")
+
+        # Noise scale for the dataset
+        noise_scale = 0.025
+
+        # -------------------------------------------------
+        # Train set: Only real patches
+        # -------------------------------------------------
+
+        self.train_set = SkinPatchDataset(
+            num_subjects=100,
+            patches_per_subject=10,
+            patch_size=patch_size,
+            noise_scale=noise_scale,
+            applyRandomIllumination=False,
+            isRealSkin=True,  # Only real patches
+            transform=transform,
+        )
+        
+        # -------------------------------------------------
+        # Test set: Real and fake patches
+        # -------------------------------------------------
+
+        self.SL1HSDB_set = SkinPatchDataset(
+            num_subjects=100,
+            patches_per_subject= 1, # num_fake_patches // num_subjects,
+            patch_size=patch_size,
+            noise_scale=noise_scale,
+            isRealSkin=True,  # Fake patches
+            applyRandomIllumination=True,
+            transform=transform,
+        )
+    
+        # Fake patches for the test set
+        self.SkinPatch_set = SkinPatchDataset(
+            num_subjects=100,
+            patches_per_subject= 1, # num_fake_patches // num_subjects,
+            patch_size=patch_size,
+            noise_scale=noise_scale,
+            isRealSkin=False,  # Fake patches
+            applyRandomIllumination=True,
+            transform=transform,
+        )
+
+        # Set global offsets for test sets
+        self.SL1HSDB_set.global_offset = 0
+        self.SkinPatch_set.global_offset = len(self.SL1HSDB_set) 
+
+        # Combine real and fake test sets and adjust indices
+        self.test_set = torch.utils.data.ConcatDataset([
+            self.SL1HSDB_set,
+            self.SkinPatch_set
+        ])   
