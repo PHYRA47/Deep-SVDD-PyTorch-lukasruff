@@ -110,7 +110,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
         return net
 
-    def test(self, dataset: BaseADDataset, net: BaseNet):
+    def test(self, dataset: BaseADDataset, net: BaseNet, threshold=None):
         logger = logging.getLogger()
 
         # Set device for network
@@ -153,19 +153,27 @@ class DeepSVDDTrainer(BaseTrainer):
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
 
-        # Compute Accuracy
-        # Using Youden's J statistic and F1 score
-        fpr, tpr, thresholds = roc_curve(labels, scores)
-        youden_j = tpr - fpr  # Youden's J statistic (maximizing sensitivity + specificity - 1)
-        optimal_idx = np.argmax(youden_j)
-        optimal_threshold_youden_j = thresholds[optimal_idx]
-        # Using F1 score
-        _, _, thresholds = precision_recall_curve(labels, scores)
-        f1_scores = [f1_score(labels, (scores >= t).astype(int)) for t in thresholds]
-        optimal_idx = np.argmax(f1_scores)
-        optimal_threshold_f1 = thresholds[optimal_idx]
+        # Compute Accuracy with calculated thresholds or user-provided threshold
+        if threshold is None:
+            # Using Youden's J statistic and F1 score
+            fpr, tpr, thresholds = roc_curve(labels, scores)
+            youden_j = tpr - fpr  # Youden's J statistic (maximizing sensitivity + specificity - 1)
+            optimal_idx = np.argmax(youden_j)
+            optimal_threshold_youden_j = thresholds[optimal_idx]
+            # Using F1 score
+            _, _, thresholds = precision_recall_curve(labels, scores)
+            f1_scores = [f1_score(labels, (scores >= t).astype(int)) for t in thresholds]
+            optimal_idx = np.argmax(f1_scores)
+            optimal_threshold_f1 = thresholds[optimal_idx]
+            
+            logger.info('Calculated optimal thresholds: Youden J = {:.2f}, F1 = {:.2f}'.format(
+                optimal_threshold_youden_j, optimal_threshold_f1))
+        else:
+            logger.info('Using user-provided threshold: {:.2f}'.format(threshold))
+            optimal_threshold_youden_j = threshold
+            optimal_threshold_f1 = threshold
 
-        # Predict labels using the optimal threshold
+        # Predict labels using the threshold(s)
         predictions_youden_j = (scores >= optimal_threshold_youden_j).astype(int)
         predictions_f1 = (scores >= optimal_threshold_f1).astype(int)
 

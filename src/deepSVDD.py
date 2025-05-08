@@ -72,18 +72,29 @@ class DeepSVDD(object):
         self.c = self.trainer.c.cpu().data.numpy().tolist()  # get list
         self.results['train_time'] = self.trainer.train_time
 
-    def test(self, dataset: BaseADDataset, device: str = 'cuda', n_jobs_dataloader: int = 0):
+    def test(self, dataset: BaseADDataset, device: str = 'cuda', n_jobs_dataloader: int = 0, threshold=None):
         """Tests the Deep SVDD model on the test data."""
 
         if self.trainer is None:
             self.trainer = DeepSVDDTrainer(self.objective, self.R, self.c, self.nu,
                                            device=device, n_jobs_dataloader=n_jobs_dataloader)
 
-        self.trainer.test(dataset, self.net)
+        self.trainer.test(dataset, self.net, threshold)
         # Get results
         self.results['test_auc'] = self.trainer.test_auc
         self.results['test_time'] = self.trainer.test_time
         self.results['test_scores'] = self.trainer.test_scores
+        self.results['test_accuracy'] = self.trainer.test_accuracy
+        
+        # Add the threshold(s) to results
+        if threshold is not None:
+            self.results['threshold'] = threshold
+        else:
+            if isinstance(self.trainer.test_accuracy, list):
+                self.results['threshold_youden_j'] = None  # You need to access the actual threshold value used
+                self.results['threshold_f1'] = None  # You need to access the actual threshold value used
+            else:
+                self.results['threshold'] = None  # You need to access the actual threshold value used
 
     def pretrain(self, dataset: BaseADDataset, optimizer_name: str = 'adam', lr: float = 0.001, n_epochs: int = 100,
                  lr_milestones: tuple = (), batch_size: int = 128, weight_decay: float = 1e-6, device: str = 'cuda',
