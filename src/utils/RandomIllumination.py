@@ -25,9 +25,22 @@ class RandomIllumination:
     """
     def __init__(self, p=1.0):
         self.p = p
-        # Target illumination
-        self.sources = ['A', 'D50', 'D55', 'E', 'HP1', 'ISO 7589 Photographic Daylight', 'ID65', 'D65', 'FL1', 'FL10', 'LED-B1', 'LED-RGB1']
-        # sources = ['D65']
+        # Target illumination sources with descriptions
+        self.sources = [
+            'A',  # Incandescent light (typical tungsten filament bulb)
+            'D50',  # Standard daylight with a correlated color temperature of 5000K
+            'D55',  # Standard daylight with a correlated color temperature of 5500K
+            'E',  # Equal energy illuminant (flat spectral power distribution)
+            # 'HP1',  # High-pressure sodium lamp
+            'ISO 7589 Photographic Daylight',  # Photographic daylight as per ISO 7589 standard
+            'ID65',  # ISO 3664:2000 D65 (standard illuminant for color rendering)
+            'D65',  # Standard daylight with a correlated color temperature of 6500K
+            # 'FL1',  # Fluorescent lamp type 1 (cool white)
+            # 'FL10',  # Fluorescent lamp type 10 (warm white)
+            'LED-B1',  # LED light source with blue spectrum emphasis
+            'LED-RGB1'  # LED light source with RGB spectrum emphasis
+        ]
+
         self.illum_sources = []
         for illum in self.sources:
             target_sd_values = SDS_ILLUMINANTS[illum].values
