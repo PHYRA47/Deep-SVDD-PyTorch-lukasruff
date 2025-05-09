@@ -7,8 +7,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --exclude=destc0strapp03
-#SBATCH --output=slurm-logs/training/test1/output.log
-#SBATCH --error=slurm-logs/training/test1/error.log
+#SBATCH --output=slurm-logs/training/test2/output.log
+#SBATCH --error=slurm-logs/training/test2/error.log
 
 # Load conda/mamba properly for SLURM
 source ~/.bashrc
@@ -19,4 +19,4 @@ conda activate venv
 nvidia-smi
 
 # Run the training script
-python main.py hs_ds HSNet ../log/test1 ../data --n_epochs 4 --batch_size 32 --ae_n_epochs 10 --ae_batch_size 32
+python main.py hs_ds HSNet ../log/test2 ../data --objective 'soft-boundary' --n_epochs 4 --batch_size 32 --ae_n_epochs 10 --ae_batch_size 32

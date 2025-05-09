@@ -18,6 +18,6 @@ def load_dataset(dataset_name, data_path, normal_class):
         dataset = CIFAR10_Dataset(root=data_path, normal_class=normal_class)
 
     if dataset_name == 'hs_ds':
-        dataset = HS_Dataset_Inference()
+        dataset = HS_Dataset()
 
     return dataset
