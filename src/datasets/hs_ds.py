@@ -157,18 +157,15 @@ class HS_Dataset_Inference(TorchvisionDataset):
         # Test set: Real and fake patches
         # -------------------------------------------------
 
-        self.SL1HSDB_set = SkinPatchDataset(
-            num_subjects=100,
-            patches_per_subject= 1, # num_fake_patches // num_subjects,
+        self.part_1 = MultiSubjectSL1HSDBDataset(
+            num_subjects=50,
+            patches_per_file= 2, # num_real_patches // num_subjects,
             patch_size=patch_size,
-            noise_scale=noise_scale,
-            isRealSkin=True,  # Fake patches
-            applyRandomIllumination=True,
             transform=transform,
         )
     
         # Fake patches for the test set
-        self.SkinPatch_set = SkinPatchDataset(
+        self.part_2 = SkinPatchDataset(
             num_subjects=100,
             patches_per_subject= 1, # num_fake_patches // num_subjects,
             patch_size=patch_size,
@@ -179,11 +176,11 @@ class HS_Dataset_Inference(TorchvisionDataset):
         )
 
         # Set global offsets for test sets
-        self.SL1HSDB_set.global_offset = 0
-        self.SkinPatch_set.global_offset = len(self.SL1HSDB_set) 
+        self.part_1.global_offset = 0
+        self.part_2.global_offset = len(self.part_1) 
 
         # Combine real and fake test sets and adjust indices
         self.test_set = torch.utils.data.ConcatDataset([
-            self.SL1HSDB_set,
-            self.SkinPatch_set
+            self.part_1,
+            self.part_2
         ])   

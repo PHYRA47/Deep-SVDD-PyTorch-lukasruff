@@ -10,11 +10,15 @@
 #SBATCH --output=slurm-logs/inference/test1/output.log
 #SBATCH --error=slurm-logs/inference/test1/error.log
 
+# Load conda/mamba properly for SLURM
+source ~/.bashrc
+eval "$(conda shell.bash hook)"
+conda activate venv
+
 nvidia-smi
 python main.py hs_ds HSNet \
-    ../log/test1_inference \
+    ../log/deep_svdd_inference_SL1DB_50sub2pps_SkinPatch_100f_withillum \
     ../data \
-    --load_model ../log/test1/model.tar \
+    --load_model /home/denegasf/repo/negasa-fromsa-teshome-msc-thesis/src/Deep-SVDD-PyTorch/log/test1_training/model.tar \
     --pretrain False \
-    --n_epochs 0 \ 
-    --threshold 0.35 \
+    --n_epochs 0 \
