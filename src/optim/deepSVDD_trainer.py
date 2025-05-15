@@ -1,8 +1,9 @@
 from base.base_trainer import BaseTrainer
 from base.base_dataset import BaseADDataset
 from base.base_net import BaseNet
+from utils.statistics import calculate_metrics
 from torch.utils.data.dataloader import DataLoader
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve, precision_score, recall_score, f1_score, confusion_matrix, precision_recall_curve
 
 import logging
 import time
@@ -110,7 +111,7 @@ class DeepSVDDTrainer(BaseTrainer):
 
         return net
 
-    def test(self, dataset: BaseADDataset, net: BaseNet):
+    def test(self, dataset: BaseADDataset, net: BaseNet, threshold=None):
         logger = logging.getLogger()
 
         # Set device for network
@@ -152,6 +153,100 @@ class DeepSVDDTrainer(BaseTrainer):
 
         self.test_auc = roc_auc_score(labels, scores)
         logger.info('Test set AUC: {:.2f}%'.format(100. * self.test_auc))
+
+        # Compute Accuracy with calculated thresholds or user-provided threshold
+        if threshold is None:
+            # Using Youden's J statistic and F1 score
+            fpr, tpr, thresholds = roc_curve(labels, scores)
+            youden_j = tpr - fpr  # Youden's J statistic (maximizing sensitivity + specificity - 1)
+            optimal_idx = np.argmax(youden_j)
+            optimal_threshold_youden_j = thresholds[optimal_idx]
+            
+            # Equal Error Rate (EER) threshold
+            fnr = 1 - tpr
+            eer_threshold_idx = np.nanargmin(np.absolute(fnr -fpr))
+            eer_threshold = thresholds[eer_threshold_idx]
+            
+            # Using F1 score
+            _, _, thresholds = precision_recall_curve(labels, scores)
+            f1_scores = [f1_score(labels, (scores >= t).astype(int)) for t in thresholds]
+            optimal_idx = np.argmax(f1_scores)
+            optimal_threshold_f1 = thresholds[optimal_idx]
+            
+            logger.info('Calculated optimal thresholds: Youden J = {:.2f}, F1 = {:.2f}, EER = {:.2f}'.format(
+                optimal_threshold_youden_j, optimal_threshold_f1, eer_threshold))
+        else:
+            logger.info('Using user-provided threshold: {:.2f}'.format(threshold))
+            optimal_threshold_youden_j = threshold
+            optimal_threshold_f1 = threshold
+            eer_threshold = threshold
+
+        # Predict labels using the threshold(s)
+        predictions_youden_j = (scores >= optimal_threshold_youden_j).astype(int)
+        predictions_f1 = (scores >= optimal_threshold_f1).astype(int)
+        prediction_eer = (scores >= eer_threshold).astype(int)
+
+        accuracy_youden_j = np.mean(predictions_youden_j == labels)
+        accuracy_f1 = np.mean(predictions_f1 == labels)
+        accuracy_eer = np.mean(prediction_eer == labels)
+
+        if np.isclose(accuracy_youden_j, accuracy_f1, accuracy_eer):
+            self.test_accuracy = accuracy_youden_j
+            logger.info('Test set Accuracy: {:.2f}% (Same for all thresholds: {:.2f})'.format(100. * self.test_accuracy, optimal_threshold_youden_j))
+            
+            # Compute metrics based on Youden's J threshold
+            self.test_conf_matrix = confusion_matrix(labels, predictions_youden_j)
+            self.test_precision = precision_score(labels, predictions_youden_j)
+            self.test_recall = recall_score(labels, predictions_youden_j)
+            self.test_f1 = f1_score(labels, predictions_youden_j)
+        else:
+            self.test_accuracy = [accuracy_youden_j, accuracy_f1]
+            logger.info('Test set Accuracy: {:.2f}% (Youden J Threshold: {:.2f})'.format(100. * self.test_accuracy[0], optimal_threshold_youden_j))
+            logger.info('Test set Accuracy: {:.2f}% (F1 Threshold: {:.2f})'.format(100. * self.test_accuracy[1], optimal_threshold_f1))
+            logger.info('Test set Accuracy: {:.2f}% (EER Threshold: {:.2f})'.format(100. * accuracy_eer, eer_threshold))
+            
+            # Compute metrics based on both thresholds
+            self.test_conf_matrix = {
+            'youden_j': confusion_matrix(labels, predictions_youden_j),
+            'f1': confusion_matrix(labels, predictions_f1)
+            }
+            self.test_precision = {
+            'youden_j': precision_score(labels, predictions_youden_j),
+            'f1': precision_score(labels, predictions_f1)
+            }
+            self.test_recall = {
+            'youden_j': recall_score(labels, predictions_youden_j),
+            'f1': recall_score(labels, predictions_f1)
+            }
+            self.test_f1 = {
+            'youden_j': f1_score(labels, predictions_youden_j),
+            'f1': f1_score(labels, predictions_f1)
+            }
+            
+        logger.info('Test set Precision: {:.2f}'.format(self.test_precision if isinstance(self.test_precision, float) else self.test_precision['youden_j']))
+        logger.info('Test set Recall: {:.2f}'.format(self.test_recall if isinstance(self.test_recall, float) else self.test_recall['youden_j']))
+        logger.info('Test set F1 Score: {:.2f}'.format(self.test_f1 if isinstance(self.test_f1, float) else self.test_f1['youden_j']))
+        logger.info('Test set Confusion Matrix:\n{}'.format(self.test_conf_matrix if isinstance(self.test_conf_matrix, np.ndarray) else self.test_conf_matrix['youden_j']))
+                
+        # ===================================================
+        # Calculate HTER metric using the logic from statistics.py
+        # ===================================================
+
+        # Use the calculate_metrics function to compute all relevant metrics
+        APCER, NPCER, ACER, EER, HTER, roc_auc, threshold, accuracy_threshold = calculate_metrics(labels, scores)
+
+        # Log the HTER metric results
+        logger.info('=' * 50)
+        logger.info('HTER Metrics:')
+        logger.info(f'APCER: {APCER*100:.2f}%')
+        logger.info(f'NPCER: {NPCER*100:.2f}%')
+        logger.info(f'ACER: {ACER*100:.2f}%')
+        logger.info(f'HTER: {HTER*100:.2f}%')
+        logger.info(f'EER: {EER*100:.2f}%')
+        logger.info(f'ROC AUC Score: {roc_auc:.4f}')
+        logger.info(f'Optimal Threshold: {threshold:.4f}')
+        logger.info(f'Accuracy at Optimal Threshold: {accuracy_threshold*100:.2f}%')
+        logger.info('=' * 50)
 
         logger.info('Finished testing.')
 

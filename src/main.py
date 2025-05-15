@@ -1,13 +1,16 @@
+import csv
 import click
 import torch
 import logging
 import random
 import numpy as np
+import matplotlib.pyplot as plt
 
 from utils.config import Config
 from utils.visualization.plot_images_grid import plot_images_grid
 from deepSVDD import DeepSVDD
 from datasets.main import load_dataset
+from sklearn.metrics import roc_curve, auc
 
 
 ################################################################################
@@ -53,9 +56,12 @@ from datasets.main import load_dataset
               help='Number of workers for data loading. 0 means that the data will be loaded in the main process.')
 @click.option('--normal_class', type=int, default=0,
               help='Specify the normal class of the dataset (all other classes are considered anomalous).')
+@click.option('--threshold', type=float, default=None,
+              help='User-defined threshold for anomaly detection (default: None, will calculate optimal threshold).')
 def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, objective, nu, device, seed,
          optimizer_name, lr, n_epochs, lr_milestone, batch_size, weight_decay, pretrain, ae_optimizer_name, ae_lr,
-         ae_n_epochs, ae_lr_milestone, ae_batch_size, ae_weight_decay, n_jobs_dataloader, normal_class):
+         ae_n_epochs, ae_lr_milestone, ae_batch_size, ae_weight_decay, n_jobs_dataloader, normal_class, threshold):
+ 
     """
     Deep SVDD, a fully deep method for anomaly detection.
 
@@ -162,27 +168,68 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
                     n_jobs_dataloader=n_jobs_dataloader)
 
     # Test model
-    deep_SVDD.test(dataset, device=device, n_jobs_dataloader=n_jobs_dataloader)
+
+    # Add threshold logging if provided
+    if threshold is not None:
+        logger.info('Using user-defined threshold: %.2f' % threshold)
+
+    deep_SVDD.test(dataset, device=device, n_jobs_dataloader=n_jobs_dataloader, threshold=threshold)
 
     # Plot most anomalous and most normal (within-class) test samples
     indices, labels, scores = zip(*deep_SVDD.results['test_scores'])
+
+    # ===================================================
+    # Compute and print AUC
+    # ===================================================
+
+    fpr, tpr, thresholds = roc_curve(labels, scores)
+    roc_auc = auc(fpr, tpr)
+
+    # Plot ROC curve
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    roc_curve_path = xp_path + '/roc_curve.png'
+    plt.savefig(roc_curve_path)
+    plt.close()
+    logger.info('ROC curve saved to %s.' % roc_curve_path)
+
+    # ===================================================
+    # Save indices, labels, and scores in a CSV format 
+    # ===================================================
+    results_file = xp_path + '/results.csv'
+    with open(results_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Index", "Label", "Score"])  # Write header
+        writer.writerows(zip(indices, labels, scores))  # Write data rows
+
+    logger.info('Results saved in CSV format to %s.' % results_file)
+    # ===================================================
+
     indices, labels, scores = np.array(indices), np.array(labels), np.array(scores)
-    idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
 
     if dataset_name in ('mnist', 'cifar10', 'hs_ds'):
 
         if dataset_name == 'mnist':
+            idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
             X_normals = dataset.test_set.test_data[idx_sorted[:32], ...].unsqueeze(1)
             X_outliers = dataset.test_set.test_data[idx_sorted[-32:], ...].unsqueeze(1)
 
         if dataset_name == 'cifar10':
+            idx_sorted = indices[labels == 0][np.argsort(scores[labels == 0])]  # sorted from lowest to highest anomaly score
             X_normals = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[:32], ...], (0, 3, 1, 2)))
             X_outliers = torch.tensor(np.transpose(dataset.test_set.test_data[idx_sorted[-32:], ...], (0, 3, 1, 2)))
 
         if dataset_name == 'hs_ds':
+            idx_sorted = indices[np.argsort(scores)]  # sorted from lowest to highest anomaly score
             X_normals = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[:32]])  
             X_outliers = torch.stack([dataset.test_set[idx][0] for idx in idx_sorted[-32:]])  
-
 
         plot_images_grid(X_normals, export_img=xp_path + '/normals', title='Most normal examples', padding=2)
         plot_images_grid(X_outliers, export_img=xp_path + '/outliers', title='Most anomalous examples', padding=2)
@@ -195,38 +242,3 @@ def main(dataset_name, net_name, xp_path, data_path, load_config, load_model, ob
 
 if __name__ == '__main__':
     main()
-
-# Example command to run the script:
-"""
- python main.py hs_ds HSNet ../log/hs_test ../data \
- --objective one-class \
- --lr 0.0001 \
- --n_epochs 150 \
- --lr_milestone 50 \
- --batch_size 200 \
- --weight_decay 0.5e-6 \
- --pretrain True \
- --ae_lr 0.0001 \
- --ae_n_epochs 150 \
- --ae_lr_milestone 50 \
- --ae_batch_size 200 \
- --ae_weight_decay 0.5e-3 \
- --normal_class 3
-
-"""
-"""
- python main.py hs_ds HSNet ../log/hs_test ../data \
- --n_epochs 1 \
- --batch_size 10 \
- --ae_n_epochs 1 \
- --ae_batch_size 10 
-
-"""
-# Example command to run the script for hyperspectral data:
-# python main.py hyperspectral my_hyperspectral_net ../log/hyperspectral_test ../data \
-# --objective one-class \
-# --lr 0.0001 \
-# --n_epochs 150 \
-# --batch_size 200 \
-# --pretrain True \
-# --normal_class 0

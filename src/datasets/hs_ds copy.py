@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
 from base.torchvision_dataset import TorchvisionDataset
-from .preprocessing import get_target_label_idx, global_contrast_normalization
+from utils.preprocessing import get_target_label_idx, global_contrast_normalization
 
 
 class HS_Dataset(TorchvisionDataset):
